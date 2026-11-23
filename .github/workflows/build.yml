@@ -1,0 +1,113 @@
+name: Build APK
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+
+# Read-only by default; only the release job may write, and only on tags.
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Certificate of the release key (public info). A build signed with any other key fails here,
+  # because such an APK would not install over the app already on the phone.
+  RELEASE_CERT_SHA256: 22250d7bc464b21111c83670b46c5622e0e5f55806db3d533fd6a13403b3d0f6
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      apk: ${{ steps.apk.outputs.file }}
+    steps:
+      # Actions pinned to commit SHAs: a moved tag can't swap in other code that sees the key.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-java@cf277c60eb25467037889841efdb72551f06f6c3 # v4.9.1
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      # Also validates gradle-wrapper.jar against the official checksums.
+      - uses: gradle/actions/setup-gradle@748248ddd2a24f49513d8f472f81c3a07d4d50e1 # v4.4.4
+
+      # Pull requests from forks get no secrets: they build an unsigned APK, which is fine for checking.
+      - name: Unpack the release key
+        id: key
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          if [ -z "$KEYSTORE_BASE64" ]; then
+            if [ "${{ github.event_name }}" != "pull_request" ]; then
+              echo "::error::Secret RELEASE_KEYSTORE_BASE64 is not set"
+              exit 1
+            fi
+            echo "signed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          umask 077
+          echo "$KEYSTORE_BASE64" | base64 --decode > "$RUNNER_TEMP/release.jks"
+          echo "signed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Build release APK
+        env:
+          RELEASE_KEYSTORE: ${{ steps.key.outputs.signed == 'true' && format('{0}/release.jks', runner.temp) || '' }}
+          RELEASE_KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          RELEASE_KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: ./gradlew assembleRelease --no-daemon --stacktrace
+
+      - name: Remove the release key
+        if: always()
+        run: rm -f "$RUNNER_TEMP/release.jks"
+
+      - name: Check the signature
+        if: steps.key.outputs.signed == 'true'
+        run: |
+          apk=$(ls app/build/outputs/apk/release/*.apk)
+          signer=$(ls -d "$ANDROID_HOME"/build-tools/* | sort -V | tail -1)/apksigner
+          cert=$("$signer" verify --print-certs "$apk" | grep -m1 'certificate SHA-256 digest' | awk '{print $NF}')
+          if [ "$cert" != "$RELEASE_CERT_SHA256" ]; then
+            echo "::error::APK is signed with an unexpected key: $cert"
+            exit 1
+          fi
+
+      - name: Name the APK by version
+        id: apk
+        run: |
+          v=$(grep -oP "versionName '\K[^']+" app/build.gradle)
+          suffix=$([ "${{ steps.key.outputs.signed }}" = "true" ] && echo "" || echo "-unsigned")
+          src=$(ls app/build/outputs/apk/release/*.apk)
+          mv "$src" "IvaAutoJoin-$v$suffix.apk"
+          echo "file=IvaAutoJoin-$v$suffix.apk" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: IvaAutoJoin-apk
+          path: ${{ steps.apk.outputs.file }}
+          if-no-files-found: error
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: IvaAutoJoin-apk
+
+      - uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          files: ${{ needs.build.outputs.apk }}
+          fail_on_unmatched_files: true

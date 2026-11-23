@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">IVA Автовход</string>
+    <string name="service_label">IVA Автовход</string>
+    <string name="service_desc">Заполняет в IVA Connect сервер, ID комнаты, ваше имя и пароль и нажимает кнопку входа. Работает только 2 минуты после запуска с ярлыка митинга и только внутри IVA Connect. Ничего не собирает и никуда не отправляет: у приложения нет доступа в интернет.</string>
+</resources>
