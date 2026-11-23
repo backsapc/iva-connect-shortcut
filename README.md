@@ -39,4 +39,4 @@ Android-приложение для быстрого входа в митинг�
 
 ## Лицензия
 
-[MIT](LICENSE)
+[MIT](LICENSE). История изменений: [CHANGELOG.md](CHANGELOG.md).
