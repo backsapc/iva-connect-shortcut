@@ -44,6 +44,12 @@ android {
             minifyEnabled false
             if (signed) signingConfig signingConfigs.release
         }
+        // Installs next to the real app, so screenshots can be taken with made-up data
+        // (adb shell am start -n ru.home.ivajoin.demo/ru.home.ivajoin.DemoSeedActivity).
+        debug {
+            applicationIdSuffix '.demo'
+            versionNameSuffix '-demo'
+        }
     }
 
     compileOptions {

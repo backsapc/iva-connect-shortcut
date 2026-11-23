@@ -20,3 +20,4 @@ signing.properties
 .env.*
 # local notes
 SUMMARY.md
+CLAUDE.local.md
