@@ -2,7 +2,7 @@
 
 Формат: [Keep a Changelog](https://keepachangelog.com/ru/1.1.0/), версии: [SemVer](https://semver.org/lang/ru/).
 
-## [Не выпущено]
+## [2.3] - 2026-11-24
 
 ### Добавлено
 
@@ -29,4 +29,5 @@
 - Нет доступа в интернет, нет рекламы и сторонних библиотек.
 - Служба работает только внутри IVA Connect и только 2 минуты после запуска с ярлыка.
 
+[2.3]: https://github.com/backsapc/iva-connect-shortcut/releases/tag/v2.3
 [2.2]: https://github.com/backsapc/iva-connect-shortcut/releases/tag/v2.2
