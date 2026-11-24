@@ -109,11 +109,24 @@ public class JoinService extends AccessibilityService {
         }
 
         // The IVA Connect flow, screen by screen:
+        //   0. server address (only when IVA lost its settings) -> type the room's server, press Connect
         //   1. "Sign in" (login + password)   -> press "Enter with ID", touch no fields
         //   2. a field for the meeting ID      -> type ID, press "Join"
         //   3. "Join event" card, no fields    -> press "Join"
         //   4. "Guest" tab with "Name"         -> type name, press "Join"
         //   5. "Event passcode"                -> type password, press "Join", done
+
+        List<AccessibilityNodeInfo> edits = new ArrayList<>();
+        collectEditable(root, edits, 0);
+
+        // 0. server address screen: IVA shows it instead of sign-in after its settings are reset
+        for (AccessibilityNodeInfo f : edits) {
+            if (classify(f) != Kind.SERVER) continue;
+            String server = serverFor(idx);
+            if (server.isEmpty()) break; // nothing to type: leave it to the user
+            fillThenPress(root, f, Kind.SERVER, server, CONNECT);
+            return;
+        }
 
         // 1. sign-in screen
         AccessibilityNodeInfo enterWithId = findButton(root, ENTER_WITH_ID);
@@ -121,9 +134,6 @@ public class JoinService extends AccessibilityService {
             click(enterWithId);
             return;
         }
-
-        List<AccessibilityNodeInfo> edits = new ArrayList<>();
-        collectEditable(root, edits, 0);
 
         // 5. passcode screen
         for (AccessibilityNodeInfo f : edits) {
@@ -134,7 +144,7 @@ public class JoinService extends AccessibilityService {
             return;
         }
 
-        if (edits.size() == 1) {
+        if (edits.size() == 1 && classify(edits.get(0)) != Kind.SERVER) {
             AccessibilityNodeInfo f = edits.get(0);
             if (hasText(root, GUEST)) {
                 // 4. guest name screen
@@ -170,9 +180,22 @@ public class JoinService extends AccessibilityService {
     private static final String ENTER_WITH_ID = "Enter with ID, Войти по ID, Войти с ID, Вход по ID";
     private static final String JOIN = "Join, Присоединиться, Подключиться, Войти, Next, Далее, Continue, Продолжить";
     private static final String GUEST = "Guest, Гость";
+    private static final String CONNECT = "Continue, Продолжить, Connect, Подключиться, Next, Далее";
+
+    /** The room's server, or the most recently used saved one if the room has none. */
+    private String serverFor(long idx) {
+        String s = Store.cleanServer(Store.server(this, idx));
+        if (!s.isEmpty()) return s;
+        List<String> saved = Servers.get(this).all();
+        return saved.isEmpty() ? "" : saved.get(0);
+    }
 
     /** Types the value if the field doesn't hold it yet, otherwise presses Join. True once Join is pressed. */
     private boolean fillThenJoin(AccessibilityNodeInfo root, AccessibilityNodeInfo f, Kind k, String value) {
+        return fillThenPress(root, f, k, value, JOIN);
+    }
+
+    private boolean fillThenPress(AccessibilityNodeInfo root, AccessibilityNodeInfo f, Kind k, String value, String buttons) {
         if (!alreadyHolds(f, k, value)) {
             int tries = setTries.containsKey(f) ? setTries.get(f) : 0;
             if (tries < MAX_SET_TRIES) { // after that accept what the app reformatted it to
@@ -182,7 +205,7 @@ public class JoinService extends AccessibilityService {
                 return false;
             }
         }
-        AccessibilityNodeInfo join = findButton(root, JOIN);
+        AccessibilityNodeInfo join = findButton(root, buttons);
         if (join == null) {
             remember(root);
             schedule(RETRY_MS);
