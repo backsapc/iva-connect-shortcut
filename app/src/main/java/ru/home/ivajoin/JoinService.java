@@ -1,8 +1,11 @@
 package ru.home.ivajoin;
 
 import android.accessibilityservice.AccessibilityService;
+import android.accessibilityservice.AccessibilityServiceInfo;
 import android.content.ComponentName;
 import android.content.Context;
+import android.content.Intent;
+import android.content.SharedPreferences;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -11,10 +14,13 @@ import android.view.accessibility.AccessibilityEvent;
 import android.view.accessibility.AccessibilityNodeInfo;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * For up to 2 minutes after a meeting shortcut is tapped, walks the IVA Connect join flow inside
@@ -37,7 +43,7 @@ public class JoinService extends AccessibilityService {
 
     private static final long RETRY_MS = 700;
     private static final long AFTER_CLICK_MS = 1500;
-    private static final int MAX_CLICKS = 8;
+    private static final int MAX_CLICKS = 10;
     private static final int MAX_SET_TRIES = 2;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -45,6 +51,7 @@ public class JoinService extends AccessibilityService {
     private long token = -1;
     private boolean posted;
     private int clicks;
+    private boolean cancelled; // already went Back from a sign-in screen with the wrong server during this join
     private final Map<AccessibilityNodeInfo, Integer> setTries = new HashMap<>();
     private String lastDump = "";
 
@@ -57,6 +64,44 @@ public class JoinService extends AccessibilityService {
             if (me.equals(cn)) return true;
         }
         return false;
+    }
+
+    // ---- scope: the system delivers events only from the app being joined, and only while a join is armed ----
+
+    private final SharedPreferences.OnSharedPreferenceChangeListener prefs = (sp, key) -> {
+        if (key == null || key.startsWith("p_")) updateScope();
+    };
+    private final Runnable rescope = this::updateScope;
+
+    @Override
+    protected void onServiceConnected() {
+        Store.listenPending(this, prefs);
+        updateScope();
+    }
+
+    @Override
+    public boolean onUnbind(Intent intent) {
+        Store.unlistenPending(this, prefs);
+        handler.removeCallbacks(rescope);
+        return super.onUnbind(intent);
+    }
+
+    private void updateScope() {
+        AccessibilityServiceInfo info = getServiceInfo();
+        if (info == null) return;
+        handler.removeCallbacks(rescope);
+        String[] pkgs;
+        long left = Store.pendingLeftMs(this);
+        if (left > 0) {
+            String pkg = Store.pendingPkg(this);
+            pkgs = pkg == null ? null : new String[]{pkg}; // link opened in an app we couldn't name in advance
+            handler.postDelayed(rescope, left + 100); // narrow back down when time runs out
+        } else {
+            pkgs = new String[]{getPackageName()}; // idle: hear nothing but ourselves
+        }
+        if (Arrays.equals(info.packageNames, pkgs)) return;
+        info.packageNames = pkgs;
+        setServiceInfo(info);
     }
 
     @Override
@@ -93,6 +138,7 @@ public class JoinService extends AccessibilityService {
         if (t != token) { // a new shortcut tap: start over
             token = t;
             clicks = 0;
+            cancelled = false;
             setTries.clear();
         }
 
@@ -110,7 +156,8 @@ public class JoinService extends AccessibilityService {
 
         // The IVA Connect flow, screen by screen:
         //   0. server address (only when IVA lost its settings) -> type the room's server, press Connect
-        //   1. "Sign in" (login + password)   -> press "Enter with ID", touch no fields
+        //   1. "Sign in" (login + password)   -> press "Enter with ID", touch no fields;
+        //      if it names another server than the room's, press Back to get to 0.
         //   2. a field for the meeting ID      -> type ID, press "Join"
         //   3. "Join event" card, no fields    -> press "Join"
         //   4. "Guest" tab with "Name"         -> type name, press "Join"
@@ -131,6 +178,14 @@ public class JoinService extends AccessibilityService {
         // 1. sign-in screen
         AccessibilityNodeInfo enterWithId = findButton(root, ENTER_WITH_ID);
         if (enterWithId != null) {
+            // IVA keeps the last server: if it's not the room's one, Back returns to the server screen (0.), once
+            if (!cancelled && wrongServer(root, idx)) {
+                cancelled = true;
+                performGlobalAction(GLOBAL_ACTION_BACK);
+                clicks++;
+                schedule(AFTER_CLICK_MS);
+                return;
+            }
             click(enterWithId);
             return;
         }
@@ -181,6 +236,44 @@ public class JoinService extends AccessibilityService {
     private static final String JOIN = "Join, Присоединиться, Подключиться, Войти, Next, Далее, Continue, Продолжить";
     private static final String GUEST = "Guest, Гость";
     private static final String CONNECT = "Continue, Продолжить, Connect, Подключиться, Next, Далее";
+
+    private static final Pattern HOST = Pattern.compile(
+            "(?<![@\\p{L}\\p{N}.-])(?:https?://)?((?:[\\p{L}\\p{N}-]+\\.)+\\p{L}{2,})", Pattern.CASE_INSENSITIVE);
+
+    /** True if the screen names a server and none of the names is the room's server. */
+    private boolean wrongServer(AccessibilityNodeInfo root, long idx) {
+        String want = hostOf(Store.server(this, idx));
+        if (want.isEmpty()) return false; // room without a server: take whatever IVA has
+        List<String> shown = new ArrayList<>();
+        collectHosts(root, shown, 0);
+        if (shown.isEmpty()) return false; // IVA doesn't show the server here: nothing to compare
+        for (String h : shown) if (h.equals(want)) return false;
+        return true;
+    }
+
+    private void collectHosts(AccessibilityNodeInfo n, List<String> out, int depth) {
+        if (n == null || depth > 40) return;
+        if (n.isVisibleToUser() && !n.isEditable()) { // typed text is the user's: only labels count
+            CharSequence t = n.getText() != null ? n.getText() : n.getContentDescription();
+            if (t != null) {
+                Matcher m = HOST.matcher(t);
+                while (m.find()) out.add(hostOf(m.group(1)));
+            }
+        }
+        for (int i = 0; i < n.getChildCount(); i++) collectHosts(n.getChild(i), out, depth + 1);
+    }
+
+    /** "https://IVA.example.ru:443/x" -> "iva.example.ru" */
+    static String hostOf(String s) {
+        s = Store.cleanServer(s).toLowerCase(Locale.ROOT);
+        int cut = s.length();
+        for (char c : new char[]{'/', ':', '?', '#'}) {
+            int i = s.indexOf(c);
+            if (i >= 0) cut = Math.min(cut, i);
+        }
+        s = s.substring(0, cut);
+        return s.startsWith("www.") ? s.substring(4) : s;
+    }
 
     /** The room's server, or the most recently used saved one if the room has none. */
     private String serverFor(long idx) {

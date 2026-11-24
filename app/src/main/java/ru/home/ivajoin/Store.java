@@ -152,7 +152,23 @@ final class Store {
         return s.getLong("p_room", -1);
     }
 
+    /** Milliseconds until the current join expires, 0 if nothing is armed. */
+    static long pendingLeftMs(Context c) {
+        SharedPreferences s = p(c);
+        if (s.getLong("p_room", -1) < 0) return 0;
+        return Math.max(0, s.getLong("p_until", 0) - System.currentTimeMillis());
+    }
+
     static String pendingPkg(Context c) { return p(c).getString("p_pkg", null); }
+
+    /** Calls back when a join is armed or cleared. Keep a strong reference to the listener. */
+    static void listenPending(Context c, SharedPreferences.OnSharedPreferenceChangeListener l) {
+        p(c).registerOnSharedPreferenceChangeListener(l);
+    }
+
+    static void unlistenPending(Context c, SharedPreferences.OnSharedPreferenceChangeListener l) {
+        p(c).unregisterOnSharedPreferenceChangeListener(l);
+    }
     static long pendingToken(Context c) { return p(c).getLong("p_token", 0); }
     static void clearPending(Context c) { p(c).edit().putLong("p_until", 0).apply(); }
 

@@ -225,13 +225,30 @@ public class MainActivity extends Activity {
         t.setPadding(0, dp(4), 0, dp(4));
         box.addView(t);
         TextView on = textButton("Включить в спец. возможностях", warn);
-        on.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)));
+        on.setOnClickListener(v -> explainService());
         box.addView(on);
         TextView restricted = textButton("Разрешить ограниченные настройки", warn);
         restricted.setOnClickListener(v -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
                 Uri.parse("package:" + getPackageName()))));
         box.addView(restricted);
         serviceBox.addView(box);
+    }
+
+    /** Says what the accessibility service can see and does before sending the user to switch it on. */
+    private void explainService() {
+        new AlertDialog.Builder(this)
+                .setTitle("Что делает автовход")
+                .setMessage("Автовход работает через службу специальных возможностей Android. Она видит надписи, "
+                        + "кнопки и поля на экране и может нажимать и вписывать текст.\n\n"
+                        + "• Включается только на 2 минуты после касания «Войти» или ярлыка комнаты "
+                        + "и только внутри IVA Connect. Остальное время другие приложения ей не видны.\n"
+                        + "• Вписывает сервер, ID комнаты, ваше имя и пароль митинга, нажимает кнопки входа.\n"
+                        + "• Ничего не собирает и никуда не отправляет: у приложения нет доступа в интернет. "
+                        + "Пароли хранятся на телефоне в зашифрованном виде.\n\n"
+                        + "Выключить можно в любой момент там же, в настройках специальных возможностей.")
+                .setPositiveButton("Открыть настройки", (d, w) -> startActivity(new Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)))
+                .setNegativeButton("Не сейчас", null)
+                .show();
     }
 
     private void renderMode() {
