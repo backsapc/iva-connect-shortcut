@@ -10,8 +10,8 @@ android {
         applicationId 'ru.home.ivajoin'
         minSdk 26
         targetSdk 34
-        versionCode 5
-        versionName '2.3'
+        versionCode 6
+        versionName '2.4'
     }
 
     // Release signing: from environment variables (CI) or from keystore.properties next to
